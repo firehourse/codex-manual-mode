@@ -49,7 +49,7 @@ async fn permission_discovery_uses_server_catalog_and_keeps_remote_custom_select
         render_bottom_popup(&chat, /*width*/ 110)
     );
     // Server-only alternatives remain visible, but cannot enter the local mutation path.
-    chat.handle_key_event(KeyEvent::from(KeyCode::Char('5')));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Char('6')));
     assert!(rx.try_recv().is_err());
     chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
     chat.open_permissions_popup();

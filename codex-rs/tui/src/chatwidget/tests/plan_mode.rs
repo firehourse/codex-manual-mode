@@ -1338,22 +1338,19 @@ async fn enter_submits_when_plan_stream_is_not_active() {
 }
 
 #[tokio::test]
-async fn collab_mode_shift_tab_cycles_only_when_idle() {
+async fn shift_tab_leaves_plan_only_when_idle() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-
-    let initial = chat.current_collaboration_mode().clone();
-    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+    chat.dispatch_command(SlashCommand::Plan);
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
-    assert_eq!(chat.current_collaboration_mode(), &initial);
-
-    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
-    assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Default);
-    assert_eq!(chat.current_collaboration_mode(), &initial);
 
     chat.on_task_started();
-    let before = chat.active_collaboration_mode_kind();
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
-    assert_eq!(chat.active_collaboration_mode_kind(), before);
+    assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
+    chat.on_task_complete(
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
+    );
+    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+    assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Default);
 }
 
 #[tokio::test]

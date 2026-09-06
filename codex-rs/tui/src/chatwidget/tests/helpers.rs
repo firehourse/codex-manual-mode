@@ -1243,6 +1243,10 @@ pub(super) fn render_bottom_first_row(chat: &ChatWidget, width: u16) -> String {
     String::new()
 }
 
+pub(crate) fn cycle_collaboration_mode(chat: &mut ChatWidget) {
+    chat.cycle_collaboration_mode();
+}
+
 pub(crate) fn render_bottom_popup(chat: &ChatWidget, width: u16) -> String {
     let height = chat.desired_height(width);
     let area = Rect::new(0, 0, width, height);

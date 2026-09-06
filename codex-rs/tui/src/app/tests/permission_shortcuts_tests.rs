@@ -105,34 +105,85 @@ async fn permission_shortcut_confirms_without_persisting() -> Result<()> {
     let contents = std::fs::read_to_string(&config_path)?;
     while events.try_recv().is_ok() {}
 
+    for selection in [
+        read_only_selection(),
+        PermissionProfileSelection {
+            profile_id: ":workspace".to_string(),
+            approval_policy: Some(AskForApproval::UnlessTrusted),
+            approvals_reviewer: Some(ApprovalsReviewer::User),
+            display_label: "Manual".to_string(),
+        },
+    ] {
+        app.apply_permission_shortcut(&mut app_server, &mut tui, thread_id, selection.clone())
+            .await;
+        let cell = app.transcript_cells.last().expect("confirmed notice");
+        insta::assert_snapshot!(
+            format!(
+                "permission_shortcut_confirmed_{}",
+                selection.display_label.to_lowercase().replace(' ', "_")
+            ),
+            lines_to_single_string(&cell.display_lines(/*width*/ 80)),
+        );
+        let settings = next_thread_settings_updated(&mut app_server, thread_id)
+            .await
+            .thread_settings;
+        let profile = Some(ActivePermissionProfile::new(selection.profile_id));
+        assert_eq!(
+            (
+                settings.active_permission_profile,
+                Some(settings.approval_policy),
+                settings.approvals_reviewer.to_core()
+            ),
+            (
+                profile.clone().map(Into::into),
+                selection.approval_policy,
+                ApprovalsReviewer::User
+            ),
+        );
+        assert_eq!(
+            (
+                app.chat_widget
+                    .config_ref()
+                    .permissions
+                    .active_permission_profile(),
+                AskForApproval::from(app.config.permissions.approval_policy.value()),
+                app.config.approvals_reviewer
+            ),
+            (
+                profile,
+                selection.approval_policy.unwrap(),
+                ApprovalsReviewer::User
+            ),
+        );
+        assert_eq!(std::fs::read_to_string(&config_path)?, contents);
+        assert!(
+            events.try_recv().is_err(),
+            "must not queue another update or config write"
+        );
+    }
+    // The turn can start after the composer has queued a shortcut event.
+    app.chat_widget.handle_server_notification(
+        turn_started_notification(thread_id, "manual-mode-turn"),
+        /*replay_kind*/ None,
+    );
+    while events.try_recv().is_ok() {}
+    let original = RuntimePermissionProfileOverride::from_config(app.chat_widget.config_ref());
     app.apply_permission_shortcut(&mut app_server, &mut tui, thread_id, read_only_selection())
         .await;
-
-    let cell = app.transcript_cells.last().expect("confirmed notice");
-    insta::assert_snapshot!(
-        lines_to_single_string(&cell.display_lines(/*width*/ 80)),
-        @"• Permissions updated to Read Only"
-    );
-
-    let settings = next_thread_settings_updated(&mut app_server, thread_id)
-        .await
-        .thread_settings;
-    let profile = app
-        .chat_widget
-        .config_ref()
-        .permissions
-        .active_permission_profile();
     assert_eq!(
-        settings.active_permission_profile,
-        profile.clone().map(Into::into)
+        RuntimePermissionProfileOverride::from_config(app.chat_widget.config_ref()),
+        original,
     );
-    assert_eq!(profile, Some(ActivePermissionProfile::new(":read-only")));
-    assert_eq!(app.config.approvals_reviewer, ApprovalsReviewer::User);
-    assert_eq!(std::fs::read_to_string(config_path)?, contents);
-    assert!(
-        events.try_recv().is_err(),
-        "must not queue another update or config write"
+    let cell = app
+        .transcript_cells
+        .last()
+        .expect("active-turn rejection notice");
+    insta::assert_snapshot!(
+        "permission_shortcut_active_turn",
+        lines_to_single_string(&cell.display_lines(/*width*/ 100)),
     );
+    assert_eq!(std::fs::read_to_string(&config_path)?, contents);
+    assert!(events.try_recv().is_err());
     app_server.shutdown().await?;
     Ok(())
 }

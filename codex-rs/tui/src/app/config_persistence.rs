@@ -1213,8 +1213,6 @@ mod tests {
     use codex_config::ConfigLayerStack;
     use codex_protocol::models::PermissionProfile;
     use codex_protocol::openai_models::ReasoningEffortPreset;
-    use crossterm::event::KeyCode;
-    use crossterm::event::KeyEvent;
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 
@@ -1320,8 +1318,7 @@ mod tests {
             .set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
         app.chat_widget
             .set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::High));
-        app.chat_widget
-            .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+        crate::chatwidget::tests::helpers::cycle_collaboration_mode(&mut app.chat_widget);
 
         let default_effort =
             app.on_apply_advanced_reasoning("gpt-5.4", ReasoningEffortConfig::Ultra);
@@ -1331,14 +1328,12 @@ mod tests {
             app.chat_widget.current_reasoning_effort(),
             Some(ReasoningEffortConfig::Ultra)
         );
-        app.chat_widget
-            .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+        crate::chatwidget::tests::helpers::cycle_collaboration_mode(&mut app.chat_widget);
         assert_eq!(
             app.chat_widget.current_reasoning_effort(),
             Some(ReasoningEffortConfig::Ultra)
         );
-        app.chat_widget
-            .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+        crate::chatwidget::tests::helpers::cycle_collaboration_mode(&mut app.chat_widget);
         assert_eq!(
             app.chat_widget.current_reasoning_effort(),
             Some(ReasoningEffortConfig::Ultra)
@@ -1367,8 +1362,7 @@ mod tests {
 
         app.on_apply_advanced_reasoning("gpt-5.4", ReasoningEffortConfig::Ultra);
         app.on_update_reasoning_effort(Some(ReasoningEffortConfig::Medium));
-        app.chat_widget
-            .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+        crate::chatwidget::tests::helpers::cycle_collaboration_mode(&mut app.chat_widget);
 
         assert_eq!(
             app.chat_widget.current_reasoning_effort(),
@@ -1389,13 +1383,11 @@ mod tests {
             .set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
         app.chat_widget
             .set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::High));
-        app.chat_widget
-            .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+        crate::chatwidget::tests::helpers::cycle_collaboration_mode(&mut app.chat_widget);
 
         app.on_apply_advanced_reasoning("gpt-5.4", ReasoningEffortConfig::Ultra);
         app.on_update_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Medium));
-        app.chat_widget
-            .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+        crate::chatwidget::tests::helpers::cycle_collaboration_mode(&mut app.chat_widget);
 
         assert_eq!(
             app.chat_widget.current_reasoning_effort(),

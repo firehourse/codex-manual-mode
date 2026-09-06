@@ -36,11 +36,37 @@ pub(crate) fn cyber_model_approval_reviewer(config: &Config) -> Option<Approvals
 }
 
 impl ChatWidget {
+    pub(super) fn permission_reviewer_disabled_reason(
+        &self,
+        reviewer: ApprovalsReviewer,
+    ) -> Option<String> {
+        let requirements = self.config.config_layer_stack.requirements();
+        requirements
+            .approvals_reviewer
+            .can_set(&reviewer)
+            .err()
+            .map(|err| err.to_string())
+            .or_else(|| {
+                (reviewer != ApprovalsReviewer::AutoReview
+                    && requirements.auto_review_required_for_model(self.current_model()))
+                .then(|| "This model requires automatic approval review.".to_string())
+            })
+    }
+
     pub(super) fn permission_mode_disabled_reason(
         &self,
         preset: &ApprovalPreset,
         approval_policy: AskForApproval,
     ) -> Option<String> {
+        if self.is_user_turn_pending_or_running()
+            && (preset.id == "manual"
+                || AskForApproval::from(self.config.permissions.approval_policy.value())
+                    == AskForApproval::UnlessTrusted)
+        {
+            return Some(
+                "Press Esc to stop the current turn before changing Manual mode.".to_string(),
+            );
+        }
         self.config
             .permissions
             .approval_policy
@@ -124,6 +150,16 @@ impl ChatWidget {
             AskForApproval::from(read_only.approval),
             ApprovalsReviewer::User,
         ));
+        if let Some(manual) = presets.iter().find(|preset| preset.id == "manual") {
+            items.push(self.builtin_permission_mode_selection_item(
+                &discovery,
+                manual,
+                ":workspace",
+                manual.description.to_string(),
+                AskForApproval::from(manual.approval),
+                ApprovalsReviewer::User,
+            ));
+        }
         items.extend(
             discovery
                 .profiles
@@ -221,7 +257,8 @@ impl ChatWidget {
             dismiss_on_select: true,
             disabled_reason: discovery
                 .disabled_reason(id, Some(approval_policy), Some(approvals_reviewer.into()))
-                .or_else(|| self.permission_mode_disabled_reason(preset, approval_policy)),
+                .or_else(|| self.permission_mode_disabled_reason(preset, approval_policy))
+                .or_else(|| self.permission_reviewer_disabled_reason(approvals_reviewer)),
             ..Default::default()
         }
     }

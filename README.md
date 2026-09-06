@@ -1,3 +1,7 @@
+This fork adds **Manual mode** for reviewing edits and commands before they run.
+See [the manual-mode guide](MANUAL_MODE.md) for usage, design, and upstream updates.
+The installation instructions below install official Codex; build this fork to get its UI changes.
+
 <p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
 <p align="center">
   <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />

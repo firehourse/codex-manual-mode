@@ -57,6 +57,16 @@ pub fn builtin_approval_presets() -> Vec<ApprovalPreset> {
             ),
             permission_profile: PermissionProfile::Disabled,
         },
+        ApprovalPreset {
+            id: "manual",
+            label: "Manual",
+            description: "Review file edits and shell commands before they run. Existing command rules and session approvals still apply.",
+            approval: AskForApproval::UnlessTrusted,
+            active_permission_profile: ActivePermissionProfile::new(
+                BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
+            ),
+            permission_profile: PermissionProfile::workspace_write(),
+        },
     ]
 }
 

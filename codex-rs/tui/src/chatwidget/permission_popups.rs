@@ -85,7 +85,14 @@ impl ChatWidget {
             };
             let default_disabled_reason = approval_disabled_reason
                 .clone()
-                .or_else(|| guardian_disabled_reason(false));
+                .or_else(|| guardian_disabled_reason(false))
+                .or_else(|| {
+                    self.permission_mode_disabled_reason(
+                        &preset,
+                        AskForApproval::from(preset.approval),
+                    )
+                })
+                .or_else(|| self.permission_reviewer_disabled_reason(ApprovalsReviewer::User));
             let default_actions = self.permission_mode_actions(
                 &preset,
                 base_name.clone(),
@@ -135,7 +142,18 @@ impl ChatWidget {
                         ),
                         dismiss_on_select: true,
                         disabled_reason: approval_disabled_reason
-                            .or_else(|| guardian_disabled_reason(true)),
+                            .or_else(|| guardian_disabled_reason(true))
+                            .or_else(|| {
+                                self.permission_mode_disabled_reason(
+                                    &preset,
+                                    AskForApproval::from(preset.approval),
+                                )
+                            })
+                            .or_else(|| {
+                                self.permission_reviewer_disabled_reason(
+                                    ApprovalsReviewer::AutoReview,
+                                )
+                            }),
                         ..Default::default()
                     });
                 }
@@ -143,12 +161,13 @@ impl ChatWidget {
                 items.push(SelectionItem {
                     name: base_name,
                     description: base_description,
-                    is_current: Self::preset_matches_current(
-                        current_approval,
-                        &current_permission_profile,
-                        self.config.cwd.as_path(),
-                        &preset,
-                    ),
+                    is_current: current_review_policy == ApprovalsReviewer::User
+                        && Self::preset_matches_current(
+                            current_approval,
+                            &current_permission_profile,
+                            self.config.cwd.as_path(),
+                            &preset,
+                        ),
                     actions: default_actions,
                     dismiss_on_select: true,
                     disabled_reason: default_disabled_reason,
@@ -333,7 +352,7 @@ impl ChatWidget {
                 });
             })];
         }
-        if approvals_reviewer == ApprovalsReviewer::User && preset.id == "auto" {
+        if approvals_reviewer == ApprovalsReviewer::User && matches!(preset.id, "auto" | "manual") {
             #[cfg(target_os = "windows")]
             {
                 if crate::windows_sandbox::level_from_config(&self.config)
@@ -402,7 +421,7 @@ impl ChatWidget {
                     && current_permission_profile.network_sandbox_policy()
                         == preset.permission_profile.network_sandbox_policy()
             }
-            "auto" => {
+            "auto" | "manual" => {
                 let file_system_policy = current_permission_profile.file_system_sandbox_policy();
                 matches!(
                     current_permission_profile,

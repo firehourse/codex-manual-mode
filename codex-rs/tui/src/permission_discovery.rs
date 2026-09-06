@@ -42,6 +42,8 @@ impl PermissionDiscovery {
                 allowed: true,
             })
             .collect::<Vec<_>>();
+        let mut seen = HashSet::new();
+        profiles.retain(|profile| seen.insert(profile.id.clone()));
         profiles.extend(config.custom_permission_profiles.iter().map(|profile| {
             PermissionProfileSummary {
                 id: profile.id.clone(),

@@ -34,7 +34,6 @@ use codex_app_server_client::RemoteAppServerClient;
 use codex_app_server_client::RemoteAppServerConnectArgs;
 pub use codex_app_server_client::RemoteAppServerEndpoint;
 use codex_app_server_protocol::Account as AppServerAccount;
-use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::GetAccountResponse;
 use codex_app_server_protocol::Thread as AppServerThread;
@@ -60,7 +59,6 @@ use codex_protocol::ThreadId;
 use codex_protocol::auth::AuthMode;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::ForcedLoginMethod;
-use codex_protocol::config_types::SandboxMode;
 #[cfg(target_os = "windows")]
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_rollout::StateDbHandle;
@@ -194,6 +192,7 @@ mod startup_draft;
 mod startup_error;
 mod startup_hooks_review;
 mod startup_orchestration;
+mod startup_permissions;
 mod startup_preflight;
 mod status;
 mod status_indicator_widget;
@@ -1649,6 +1648,7 @@ async fn run_ratatui_app(
     #[cfg(not(target_os = "windows"))]
     let should_prompt_windows_sandbox_nux_at_startup = false;
 
+    startup_permissions::validate(&cli, &config)?;
     let Cli {
         prompt,
         shared,

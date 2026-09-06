@@ -65,6 +65,13 @@ pub struct Cli {
     #[arg(long = "ask-for-approval", short = 'a')]
     pub approval_policy: Option<ApprovalModeCliArg>,
 
+    /// Start in Manual mode: review file edits and untrusted commands before they run.
+    #[arg(
+        long,
+        conflicts_with_all = ["approval_policy", "sandbox_mode", "auto_review", "dangerously_bypass_approvals_and_sandbox"]
+    )]
+    pub manual: bool,
+
     /// Enable live web search. When enabled, the native Responses `web_search` tool is available to the model (no per‑call approval).
     #[arg(long = "search", default_value_t = false)]
     pub web_search: bool,

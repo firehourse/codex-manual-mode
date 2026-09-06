@@ -10,5 +10,8 @@ expression: popup
   2. Full Access       Codex can edit files outside this workspace and access
                        the internet without asking for approval. Exercise
                        caution when using.
+  3. Manual            Review file edits and shell commands before they run.
+                       Existing command rules and session approvals still
+                       apply.
 
   Press enter to confirm or esc to go back

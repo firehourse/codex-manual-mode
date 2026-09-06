@@ -81,8 +81,7 @@ async fn switching_from_ultra_thread_restores_configured_plan_effort() {
         },
         /*resume_restored_queue*/ false,
     );
-    app.chat_widget
-        .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+    crate::chatwidget::tests::helpers::cycle_collaboration_mode(&mut app.chat_widget);
 
     assert_eq!(
         app.chat_widget.active_collaboration_mode_kind(),

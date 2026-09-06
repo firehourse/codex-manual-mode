@@ -1,0 +1,5 @@
+---
+source: tui/src/startup_permissions_tests.rs
+expression: error.to_string()
+---
+Manual mode is unavailable under the current approval requirements

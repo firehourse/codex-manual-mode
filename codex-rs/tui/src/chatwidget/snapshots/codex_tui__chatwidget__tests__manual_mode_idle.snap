@@ -1,0 +1,7 @@
+---
+source: tui/src/chatwidget/tests/permission_shortcuts_tests.rs
+expression: "render_bottom_popup(&chat, 90)"
+---
+› Ask Codex to do anything
+
+  gpt-5.6-sol default                                   Manual mode (shift+tab to cycle)
