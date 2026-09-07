@@ -1,0 +1,13 @@
+---
+source: tui/src/startup_permissions_tests.rs
+expression: preview
+---
+[
+  {
+    "path": "<SCRATCH>/review-script.js",
+    "kind": {
+      "type": "add"
+    },
+    "diff": "console.log('reviewed');\n"
+  }
+]

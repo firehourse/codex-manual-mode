@@ -4,7 +4,16 @@ use super::*;
 
 impl ChatWidget {
     pub(super) fn handle_permission_shortcut(&mut self, key_event: KeyEvent) -> bool {
-        let forward = if self.chat_keymap.next_permission_mode.is_pressed(key_event) {
+        // Shift+Tab leaves Plan mode through the collaboration-mode handler below.
+        // In execution mode it cycles permissions, independently of model settings.
+        let shift_tab = (matches!(key_event.code, KeyCode::BackTab)
+            || key_hint::shift(KeyCode::Tab).is_press(key_event))
+            && key_event.kind == KeyEventKind::Press
+            && !key_event
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && self.active_mode_kind() == ModeKind::Default;
+        let forward = if shift_tab || self.chat_keymap.next_permission_mode.is_pressed(key_event) {
             true
         } else if self
             .chat_keymap
@@ -25,6 +34,14 @@ impl ChatWidget {
             self.add_error_message(PARENT_OWNED_INPUT_MESSAGE.to_string());
             return true;
         }
+        if self.is_user_turn_pending_or_running() {
+            self.add_info_message(
+                "Press Esc to stop the current turn, then Shift+Tab to change permissions."
+                    .to_string(),
+                /*hint*/ None,
+            );
+            return true;
+        }
         let Some(thread_id) = self.thread_id else {
             return true;
         };
@@ -34,7 +51,9 @@ impl ChatWidget {
         let active_profile = self.config.permissions.active_permission_profile();
         let mut choices = Vec::new();
         for preset in builtin_approval_presets() {
-            if !matches!(preset.id, "read-only" | "auto") {
+            if !matches!(preset.id, "read-only" | "auto" | "manual")
+                || (shift_tab && preset.id == "read-only")
+            {
                 continue;
             }
             for reviewer in [ApprovalsReviewer::User, ApprovalsReviewer::AutoReview] {
@@ -45,19 +64,16 @@ impl ChatWidget {
                     continue;
                 }
                 let approval = AskForApproval::from(preset.approval);
-                let requirements = self.config.config_layer_stack.requirements();
                 if self
                     .permission_mode_disabled_reason(&preset, approval)
                     .is_some()
-                    || requirements.approvals_reviewer.can_set(&reviewer).is_err()
-                    || (requirements.auto_review_required_for_model(self.current_model())
-                        && reviewer != ApprovalsReviewer::AutoReview)
+                    || self.permission_reviewer_disabled_reason(reviewer).is_some()
                 {
                     continue;
                 }
                 // These modes still need the explicit Windows setup/warning flow.
                 #[cfg(target_os = "windows")]
-                if preset.id == "auto"
+                if matches!(preset.id, "auto" | "manual")
                     && reviewer == ApprovalsReviewer::User
                     && (crate::windows_sandbox::level_from_config(&self.config)
                         == WindowsSandboxLevel::Disabled

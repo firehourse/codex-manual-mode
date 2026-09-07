@@ -1135,6 +1135,14 @@ async fn cli_main(
         mut interactive,
         subcommand,
     } = MultitoolCli::parse();
+    if interactive.manual
+        && matches!(
+            &subcommand,
+            Some(Subcommand::Exec(_) | Subcommand::Review(_))
+        )
+    {
+        anyhow::bail!("--manual requires an interactive session; run codex without exec or review");
+    }
     reject_unsupported_worktree_for_subcommand(interactive.shared.worktree, &subcommand)?;
     // Fold --enable/--disable into config overrides so they flow to all subcommands.
     let toggle_overrides = feature_toggles.to_overrides()?;
@@ -2946,6 +2954,7 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
         shared,
         strict_config,
         approval_policy,
+        manual,
         web_search,
         no_alt_screen,
         prompt,
@@ -2953,6 +2962,10 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
         ..
     } = subcommand_cli;
     let subcommand_auto_review = shared.auto_review;
+    let subcommand_permissions = subcommand_auto_review
+        || shared.dangerously_bypass_approvals_and_sandbox
+        || shared.sandbox_mode.is_some()
+        || approval_policy.is_some();
     interactive
         .shared
         .apply_subcommand_overrides(shared.into_inner());
@@ -2963,6 +2976,14 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
         interactive.approval_policy = None;
     } else if let Some(approval) = approval_policy {
         interactive.approval_policy = Some(approval);
+    }
+    if manual {
+        interactive.manual = true;
+        interactive.approval_policy = None;
+        interactive.sandbox_mode = None;
+        interactive.dangerously_bypass_approvals_and_sandbox = false;
+    } else if subcommand_permissions {
+        interactive.manual = false;
     }
     if web_search {
         interactive.web_search = true;
@@ -4137,6 +4158,23 @@ mod tests {
             assert!(finalize(&["codex", command, "--no-alt-screen"]).no_alt_screen);
             assert!(finalize(&["codex", "--no-alt-screen", command]).no_alt_screen);
             assert!(!finalize(&["codex", command]).no_alt_screen);
+        }
+    }
+
+    #[test]
+    fn resume_and_fork_apply_manual_startup_flags() {
+        for (command, finalize) in [
+            ("resume", finalize_resume_from_args as fn(&[&str]) -> TuiCli),
+            ("fork", finalize_fork_from_args as fn(&[&str]) -> TuiCli),
+        ] {
+            assert!(finalize(&["codex", command, "--manual"]).manual);
+            assert!(finalize(&["codex", "--manual", command]).manual);
+            assert!(!finalize(&["codex", command]).manual);
+            let manual = finalize(&["codex", "--yolo", command, "--manual"]);
+            assert!(manual.manual);
+            assert!(!manual.dangerously_bypass_approvals_and_sandbox);
+            let automatic = finalize(&["codex", "--manual", command, "--approve-for-me"]);
+            assert!(!automatic.manual);
         }
     }
 

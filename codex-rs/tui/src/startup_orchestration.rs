@@ -24,18 +24,6 @@ pub(super) async fn run_main_inner(
             ));
         }
     }
-    let (sandbox_mode, approval_policy) = if cli.dangerously_bypass_approvals_and_sandbox {
-        (
-            Some(SandboxMode::DangerFullAccess),
-            Some(AskForApproval::Never.to_core()),
-        )
-    } else {
-        (
-            cli.sandbox_mode.map(Into::<SandboxMode>::into),
-            cli.approval_policy.map(Into::into),
-        )
-    };
-
     cli.shared
         .take_auto_review_config_overrides(&mut cli.config_overrides);
 
@@ -121,12 +109,10 @@ pub(super) async fn run_main_inner(
         } else {
             CloudConfigBundleLoader::default()
         };
-        load_config_or_exit(
+        let config = load_config_or_exit(
             cli_kv_overrides.clone(),
             ConfigOverrides {
                 model: cli.model.clone(),
-                approval_policy,
-                sandbox_mode,
                 cwd: validation_cwd.map(AbsolutePathBuf::into_path_buf),
                 model_provider: cli
                     .oss
@@ -139,13 +125,14 @@ pub(super) async fn run_main_inner(
                     .flatten(),
                 bypass_hook_trust: cli.bypass_hook_trust.then_some(true),
                 additional_writable_roots: cli.add_dir.clone(),
-                ..Default::default()
+                ..startup_permissions::overrides(&cli)
             },
             validation_loader_overrides,
             validation_cloud_config_bundle,
             strict_config,
         )
         .await;
+        startup_permissions::validate(&cli, &config)?;
     }
 
     let reuse_implicit_local_daemon = !cli.shared.worktree
@@ -347,8 +334,6 @@ pub(super) async fn run_main_inner(
 
     let mut overrides = ConfigOverrides {
         model,
-        approval_policy,
-        sandbox_mode,
         cwd: cwd_override,
         model_provider: model_provider_override.clone(),
         codex_self_exe: arg0_paths.codex_self_exe.clone(),
@@ -357,7 +342,7 @@ pub(super) async fn run_main_inner(
         show_raw_agent_reasoning: cli.oss.then_some(true),
         bypass_hook_trust: cli.bypass_hook_trust.then_some(true),
         additional_writable_roots: additional_dirs,
-        ..Default::default()
+        ..startup_permissions::overrides(&cli)
     };
 
     let mut config = startup_draft

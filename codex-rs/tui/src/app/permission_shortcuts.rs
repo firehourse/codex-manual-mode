@@ -18,6 +18,10 @@ impl App {
             return;
         }
         let result: Result<()> = async {
+            // A queued submission can start between the keypress and this event.
+            if self.chat_widget.is_user_turn_pending_or_running() {
+                color_eyre::eyre::bail!("stop the current turn before changing permissions");
+            }
             let active_profile = ActivePermissionProfile::new(selection.profile_id.clone());
             let profile = builtin_permission_profile_for_active_permission_profile(&active_profile)
                 .ok_or_else(|| color_eyre::eyre::eyre!("unknown built-in permission profile"))?;

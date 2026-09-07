@@ -54,8 +54,7 @@ async fn backend_banner_fallback_updates_task_settings_and_keeps_notice() -> Res
         app.chat_widget
             .set_reasoning_effort(Some(ReasoningEffortConfig::Medium));
         if mode_kind == ModeKind::Plan {
-            app.chat_widget
-                .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+            crate::chatwidget::tests::helpers::cycle_collaboration_mode(&mut app.chat_widget);
             app.chat_widget
                 .set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::High));
         }
@@ -157,9 +156,9 @@ async fn backend_banner_fallback_updates_task_settings_and_keeps_notice() -> Res
         assert_eq!(std::fs::read(&config_path).ok(), saved_config);
         if mode_kind == ModeKind::Plan {
             let chat = &mut app.chat_widget;
-            chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+            crate::chatwidget::tests::helpers::cycle_collaboration_mode(chat);
             assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Default);
-            chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+            crate::chatwidget::tests::helpers::cycle_collaboration_mode(chat);
         }
         app.chat_widget
             .restore_user_message_to_composer(UserMessage::from("continue"));

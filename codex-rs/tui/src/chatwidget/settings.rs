@@ -596,13 +596,13 @@ impl ChatWidget {
     }
 
     fn collaboration_mode_indicator(&self) -> Option<CollaborationModeIndicator> {
-        if !self.collaboration_modes_enabled() {
-            return None;
+        if self.collaboration_modes_enabled() && self.active_mode_kind() == ModeKind::Plan {
+            return Some(CollaborationModeIndicator::Plan);
         }
-        match self.active_mode_kind() {
-            ModeKind::Plan => Some(CollaborationModeIndicator::Plan),
-            ModeKind::Default => None,
-        }
+        (AskForApproval::from(self.config.permissions.approval_policy.value())
+            == AskForApproval::UnlessTrusted
+            && self.config.approvals_reviewer == ApprovalsReviewer::User)
+            .then_some(CollaborationModeIndicator::Manual)
     }
 
     pub(super) fn update_collaboration_mode_indicator(&mut self) {

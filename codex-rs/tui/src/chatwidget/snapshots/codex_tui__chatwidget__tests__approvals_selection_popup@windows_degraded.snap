@@ -16,6 +16,10 @@ expression: popup
                                            workspace and access the internet
                                            without asking for approval. Exercise
                                            caution when using.
+  4. Manual                                Review file edits and shell
+                                           commands before they run. Existing
+                                           command rules and session approvals
+                                           still apply.
 
   The non-admin sandbox protects your files and prevents network access under
   most circumstances. However, it carries greater risk if prompt injected. To

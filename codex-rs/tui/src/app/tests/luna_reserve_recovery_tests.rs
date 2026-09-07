@@ -125,8 +125,7 @@ async fn luna_reserve_entry_dispatches_an_already_queued_turn_with_accepted_sett
             .set_feature_enabled(Feature::FastMode, /*enabled*/ true);
         app.chat_widget.set_service_tier(Some("fast".into()));
         if mode == ModeKind::Plan {
-            app.chat_widget
-                .handle_key_event(KeyEvent::from(KeyCode::BackTab));
+            crate::chatwidget::tests::helpers::cycle_collaboration_mode(&mut app.chat_widget);
         }
         app.chat_widget
             .restore_user_message_to_composer(UserMessage::from("continue"));
