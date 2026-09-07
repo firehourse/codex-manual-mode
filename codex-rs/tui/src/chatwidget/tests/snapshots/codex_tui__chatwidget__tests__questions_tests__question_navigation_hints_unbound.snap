@@ -1,0 +1,21 @@
+---
+source: tui/src/chatwidget/tests/questions_tests.rs
+expression: "format!(\"COLLAPSED\\n{collapsed}\\n\\nNARROW\\n{narrow}\\n\\nEXPANDED\\n{expanded}\")"
+---
+COLLAPSED
+• Queued follow-up inputs
+  ? 2 questions
+
+› main draft
+
+  gpt-5.6-sol default · /tmp/project
+
+NARROW
+• Queued follow-up inputs
+  ? 2 questions
+
+› main draft
+
+  gpt-5.6-sol default · /tm…
+
+EXPANDED

@@ -200,13 +200,22 @@ impl AsyncQuestions {
             tips.push(format!("{} skip", key.display_label()).dim());
         }
         tips.extend(option_tip);
-        if let Some(key) = chat_hint("prompt_stack_back") {
+        let navigation_hint = |action| {
+            self.keymap
+                .shortcut_hints(KeymapContext::Chat, action)
+                .into_iter()
+                .map(crate::key_hint::ShortcutHint::display_label)
+                .collect::<Vec<_>>()
+                .join(" / ")
+        };
+        let back = navigation_hint("prompt_stack_back");
+        if !back.is_empty() {
             let label = if self.state.current_idx > 0 {
                 "prev question"
             } else {
                 "main prompt"
             };
-            tips.push(format!("{} {label}", key.display_label()).dim());
+            tips.push(format!("{back} {label}").dim());
         }
         let next = if self.state.current_idx + 1 < self.state.pending.len() {
             Some("next question")
@@ -215,10 +224,11 @@ impl AsyncQuestions {
         } else {
             None
         };
+        let forward = navigation_hint("edit_queued_message");
         if let Some(label) = next
-            && let Some(key) = self.next_hint
+            && !forward.is_empty()
         {
-            tips.push(format!("{} {label}", key.display_label()).dim());
+            tips.push(format!("{forward} {label}").dim());
         }
         let mut lines = Vec::new();
         let mut line = Line::default();
