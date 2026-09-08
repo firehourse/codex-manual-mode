@@ -511,8 +511,14 @@ async fn questions_and_queued_messages_share_the_resolved_shortcut() {
         .push_back(UserMessage::from("queued".to_string()).into());
     chat.refresh_pending_input_preview();
     for binding in [key_hint::shift(KeyCode::Left), key_hint::alt(KeyCode::Up)] {
-        chat.bottom_pane
-            .set_queued_message_edit_binding(Some(binding.into()));
+        let spec = if binding == key_hint::shift(KeyCode::Left) {
+            "shift-left"
+        } else {
+            "alt-up"
+        };
+        let config = toml::from_str(&format!("[chat]\nedit_queued_message = '{spec}'")).unwrap();
+        let keymap = RuntimeKeymap::from_config(&config).unwrap();
+        chat.apply_keymap_update(config, &keymap);
         let hint = binding.display_label();
         assert!(render_bottom_popup(&chat, /*width*/ 100).contains(&hint));
         chat.add_async_questions(&hint, &questions());
@@ -524,5 +530,61 @@ async fn questions_and_queued_messages_share_the_resolved_shortcut() {
             render_bottom_popup(&chat, /*width*/ 100)
         );
         chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
+    }
+}
+
+#[tokio::test]
+async fn question_navigation_hints_follow_live_keymap_updates() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.bottom_pane
+        .set_composer_text("main draft".into(), Vec::new(), Vec::new());
+    chat.add_async_questions("message", &questions());
+
+    for (name, config, expected_hint) in [
+        ("defaults", "", "⌥ + ↑ / shift + ←"),
+        (
+            "shift_right",
+            "[chat]\nedit_queued_message = 'shift-right'\nprompt_stack_back = 'shift-left'",
+            "shift + →",
+        ),
+        (
+            "chord_and_alternate",
+            "[chat]\nedit_queued_message = ['ctrl-x up', 'shift-right']\nprompt_stack_back = 'shift-left'",
+            "ctrl + x ↑ / shift + →",
+        ),
+        ("unbound", "[chat]\nedit_queued_message = []", ""),
+    ] {
+        let config = toml::from_str(config).unwrap();
+        let keymap = RuntimeKeymap::from_config(&config).unwrap();
+        chat.apply_keymap_update(config, &keymap);
+        let collapsed = normalize_snapshot_paths(render_bottom_popup(&chat, /*width*/ 100));
+        if expected_hint.is_empty() {
+            assert!(!collapsed.contains("to answer"));
+        } else {
+            assert!(collapsed.contains(&format!("{expected_hint} to answer")));
+        }
+        let narrow = normalize_snapshot_paths(render_bottom_popup(&chat, /*width*/ 28));
+        let mut expanded = String::new();
+        // App-level chord routing supplies the dispatch event in this binding list.
+        for binding in &keymap.chat.edit_queued_message {
+            let (code, modifiers) = binding.parts();
+            chat.handle_key_event(KeyEvent::new(code, modifiers));
+            assert!(chat.bottom_pane.questions.as_ref().unwrap().expanded);
+            expanded = render_bottom_popup(&chat, /*width*/ 100);
+            assert!(expanded.contains(&format!("{expected_hint} next question")));
+            let (code, modifiers) = keymap.chat.prompt_stack_back[0].parts();
+            chat.handle_key_event(KeyEvent::new(code, modifiers));
+            assert_eq!(
+                (
+                    chat.bottom_pane.questions.as_ref().unwrap().expanded,
+                    chat.bottom_pane.composer_text(),
+                ),
+                (false, "main draft".to_string())
+            );
+        }
+        insta::assert_snapshot!(
+            format!("question_navigation_hints_{name}"),
+            format!("COLLAPSED\n{collapsed}\n\nNARROW\n{narrow}\n\nEXPANDED\n{expanded}")
+        );
     }
 }

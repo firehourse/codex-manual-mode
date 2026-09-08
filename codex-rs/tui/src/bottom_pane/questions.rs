@@ -1,6 +1,34 @@
 //! Own question-editor creation, restoration, and the collapsed entry point.
 
 use super::*;
+use crate::wrapping::RtOptions;
+use crate::wrapping::word_wrap_lines;
+
+pub(super) struct QuestionSummary(pub(super) Vec<Line<'static>>);
+
+impl QuestionSummary {
+    fn wrapped_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.0
+            .iter()
+            .flat_map(|line| {
+                word_wrap_lines(
+                    std::iter::once(line),
+                    RtOptions::new(usize::from(width)).subsequent_indent("    ".into()),
+                )
+            })
+            .collect()
+    }
+}
+
+impl Renderable for QuestionSummary {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        Renderable::render(&Paragraph::new(self.wrapped_lines(area.width)), area, buf);
+    }
+
+    fn desired_height(&self, width: u16) -> u16 {
+        self.wrapped_lines(width).len() as u16
+    }
+}
 
 impl BottomPane {
     pub(crate) fn push_async_questions(
@@ -23,7 +51,6 @@ impl BottomPane {
                 self.keymap.clone(),
             );
             questions.set_vim_enabled(self.composer.is_vim_enabled());
-            questions.next_hint = self.pending_input_preview.edit_binding;
             Box::new(questions)
         })
     }
@@ -54,8 +81,19 @@ impl BottomPane {
             .bold(),
             countdown.dim(),
         ])];
-        if let Some(binding) = self.pending_input_preview.edit_binding {
-            lines.push(Line::from(vec!["    ".into(), binding.into(), " to answer".into()]).dim());
+        let hints = self
+            .keymap
+            .shortcut_hints(KeymapContext::Chat, "edit_queued_message");
+        if !hints.is_empty() {
+            let mut spans = vec!["    ".into()];
+            for (index, hint) in hints.into_iter().enumerate() {
+                if index > 0 {
+                    spans.push(" / ".into());
+                }
+                spans.push(hint.into());
+            }
+            spans.push(" to answer".into());
+            lines.push(Line::from(spans).dim());
         }
         Some(lines)
     }

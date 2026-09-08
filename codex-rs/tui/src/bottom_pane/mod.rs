@@ -563,9 +563,6 @@ impl BottomPane {
         binding: Option<crate::key_hint::ShortcutHint>,
     ) {
         self.pending_input_preview.set_edit_binding(binding);
-        if let Some(questions) = &mut self.questions {
-            questions.next_hint = binding;
-        }
         self.request_redraw();
     }
 
@@ -2046,7 +2043,7 @@ impl BottomPane {
             if let Some(summary) = self.question_summary(Instant::now()) {
                 flex.push(
                     /*flex*/ 0,
-                    RenderableItem::Owned(Box::new(Paragraph::new(summary))),
+                    RenderableItem::Owned(Box::new(questions::QuestionSummary(summary))),
                 );
             }
             let mut flex2 = FlexRenderable::new();
