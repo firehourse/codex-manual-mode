@@ -4,9 +4,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use codex_protocol::ThreadId;
-use codex_protocol::approvals::GuardianAssessmentOutcome;
-use codex_protocol::approvals::GuardianRiskLevel;
-use codex_protocol::approvals::GuardianUserAuthorization;
 use serde_json::Value;
 
 use crate::ConversationHistorySnapshot;
@@ -14,19 +11,6 @@ use crate::ExtensionData;
 
 /// Thread-local state installed only after Guardian V2's async classifier initializes.
 pub struct GuardianV2Enabled;
-
-/// Classification returned by an approval reviewer.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ApprovalAssessment {
-    /// Final allow-or-deny decision for the requested action.
-    pub outcome: GuardianAssessmentOutcome,
-    /// Risk level assigned to the action by the reviewer.
-    pub risk_level: GuardianRiskLevel,
-    /// Whether the conversation authorizes the requested action.
-    pub user_authorization: GuardianUserAuthorization,
-    /// Human-readable explanation of the assessment.
-    pub rationale: String,
-}
 
 /// Operational failure returned by an approval reviewer.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,18 +62,21 @@ pub enum ApprovalDecision {
     AskUser,
 }
 
-/// Runs the existing synchronous review for the bound action and cancellation token.
-/// Implementations must not resolve policy or reuse an async score.
+/// Runs an extension-owned synchronous review already bound to an action by the host.
+/// Implementations must not reuse an async score. `None` requests the host user
+/// flow when automatic review exhausts its input budget and host policy permits it.
 pub trait SynchronousApprovalReviewer: Send + Sync {
     fn review(
         &self,
         reason: codex_protocol::approvals::GuardianReviewReason,
-    ) -> crate::ExtensionFuture<'_, codex_protocol::protocol::ReviewDecision>;
+    ) -> crate::ExtensionFuture<'_, Option<codex_protocol::protocol::ReviewDecision>>;
 }
 
 /// Inputs to Guardian's policy choice. Conversation and scores stay thread-owned.
 pub struct ApprovalDecisionInput<'a> {
     pub approval_id: &'a str,
+    /// Host tool invocation being approved, absent for approvals without a tool call.
+    pub tool_call_id: Option<&'a str>,
     pub action: &'a serde_json::Value,
     pub thread_id: ThreadId,
     pub thread_store: &'a ExtensionData,

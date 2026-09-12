@@ -81,6 +81,67 @@ fn enqueue(worker: &CaptureWorker, samples: usize, generation: u64, at: Instant)
     }
 }
 
+#[test]
+fn combined_mute_and_suppression_cancel_old_speaker_and_capture_work() {
+    let buffers = Arc::new(Buffers::new(
+        /*input_rate*/ 48_000, /*output_rate*/ 48_000,
+    ));
+    let port = super::super::playback::PlaybackPort::new(buffers.clone(), /*rate*/ 48_000);
+    let mut worker = CaptureWorker {
+        buffers: buffers.clone(),
+        processor: processing::Processor::new(
+            /*input_rate*/ 48_000, /*output_rate*/ 48_000,
+        )
+        .unwrap(),
+        pending: VecDeque::new(),
+    };
+    worker
+        .set_controls(AudioControls {
+            microphone_muted: false,
+            speaker_suppressed: false,
+        })
+        .unwrap();
+    worker.pending.push_back(crate::audio_track::EncodedAudio {
+        data: vec![1],
+        at: Instant::now(),
+    });
+    // A failed speaker transition must not start microphone reset first.
+    buffers.speaker.store(u64::MAX, Ordering::Release);
+    assert!(
+        worker
+            .set_controls(AudioControls {
+                microphone_muted: true,
+                speaker_suppressed: false,
+            })
+            .is_err()
+    );
+    assert_eq!(
+        (
+            buffers.speaker.load(Ordering::Acquire),
+            buffers.microphone.load(Ordering::Acquire),
+            worker.pending.len(),
+        ),
+        (u64::MAX, 2, 1)
+    );
+    buffers.speaker.store(/*val*/ 2, Ordering::Release);
+    let writer = port.writer();
+    worker
+        .set_controls(AudioControls {
+            microphone_muted: true,
+            speaker_suppressed: true,
+        })
+        .unwrap();
+    assert_eq!(
+        (
+            buffers.speaker.load(Ordering::Acquire),
+            buffers.microphone.load(Ordering::Acquire),
+            worker.pending.len(),
+            writer.write(&[0; 4]),
+        ),
+        (3, 3, 0, Err("speaker writer cancelled"))
+    );
+}
+
 async fn receive_capture(
     worker: &mut CaptureWorker,
     local: &mut Transport,
@@ -206,12 +267,32 @@ async fn capture_reaches_remote_rtp_and_mute_discards_queued_and_partial_audio()
         worker.set_controls(muted()).unwrap();
         worker.set_controls(unmuted()).unwrap();
         let old_generation = worker.buffers.microphone.load(Ordering::Acquire);
-        now = Instant::now();
+        now = Instant::now().max(start + Duration::from_millis(/*millis*/ 100));
         enqueue(&worker, /*samples*/ 720, old_generation, now);
         assert_eq!(worker.service(&mut local.audio, || now).await.unwrap(), 0);
         enqueue(&worker, /*samples*/ 2_880, old_generation, now);
         worker.set_controls(muted()).unwrap();
         assert_eq!(worker.service(&mut local.audio, || now).await.unwrap(), 0);
+        let silence = received.recv().await.unwrap();
+        let mut decoder = opus::Decoder::new(/*sample_rate*/ 48_000, opus::Channels::Mono).unwrap();
+        let mut decoded = [1.0; 960];
+        assert_eq!(
+            decoder
+                .decode_float(&silence.payload, &mut decoded, /*fec*/ false)
+                .unwrap(),
+            960
+        );
+        assert!(decoded.iter().all(|sample| sample.abs() < 0.0001));
+        assert_eq!(
+            silence.header.sequence_number,
+            before
+                .last()
+                .unwrap()
+                .header
+                .sequence_number
+                .wrapping_add(1)
+        );
+        assert!(received.try_recv().is_err());
 
         // A callback that began before mute may enqueue its old generation only
         // after unmute; a newly started callback may still carry an old device
@@ -243,12 +324,7 @@ async fn capture_reaches_remote_rtp_and_mute_discards_queued_and_partial_audio()
         );
         assert_eq!(
             after[0].header.sequence_number,
-            before
-                .last()
-                .unwrap()
-                .header
-                .sequence_number
-                .wrapping_add(1)
+            silence.header.sequence_number.wrapping_add(1)
         );
         assert!(received.try_recv().is_err());
 
@@ -276,22 +352,77 @@ async fn capture_reaches_remote_rtp_and_mute_discards_queued_and_partial_audio()
         assert_eq!(worker.service(&mut local.audio, || now).await.unwrap(), 0);
         assert!(received.try_recv().is_err());
 
-        // Waiting behind a slow send cannot extend the capture freshness limit.
+        // Waiting behind a slow send discards stale audio without ending the session.
         let generation = worker.buffers.microphone.load(Ordering::Acquire);
         now = Instant::now() + Duration::from_secs(/*secs*/ 1);
         enqueue(&worker, /*samples*/ 2_880, generation, now);
         assert_eq!(worker.service(&mut local.audio, || now).await.unwrap(), 1);
         received.recv().await.unwrap();
         let stale = now + Duration::from_secs(/*secs*/ 1);
-        assert_eq!(
-            worker
-                .service(&mut local.audio, || stale)
-                .await
-                .unwrap_err()
-                .to_string(),
-            "voice processing fell behind"
-        );
+        assert_eq!(worker.service(&mut local.audio, || stale).await.unwrap(), 0);
         assert!(received.try_recv().is_err());
+        now = stale + Duration::from_millis(/*millis*/ 10);
+        enqueue(&worker, /*samples*/ 2_880, generation, now);
+        let resumed = receive_capture(&mut worker, &mut local, &mut received, now).await;
+        assert!(!resumed.is_empty());
+
+        // A saturated callback queue also retires partial processing state, then
+        // admits new capture once the worker catches up.
+        enqueue(&worker, /*samples*/ 2_880, generation, now);
+        worker
+            .buffers
+            .capture_dropped
+            .store(true, Ordering::Release);
+        assert_eq!(worker.service(&mut local.audio, || now).await.unwrap(), 0);
+        assert!(received.try_recv().is_err());
+        now += Duration::from_millis(/*millis*/ 70);
+        enqueue(&worker, /*samples*/ 2_880, generation, now);
+        assert!(
+            !receive_capture(&mut worker, &mut local, &mut received, now)
+                .await
+                .is_empty()
+        );
+
+        // A delayed worker must discard a full render-reference queue before
+        // it feeds stale speaker audio back into echo cancellation.
+        let mut output = [0.0_f32; BLOCK];
+        let mut output_state = super::super::OutputState::default();
+        for _ in 0..=worker.buffers.rendered.capacity() {
+            super::super::render_output(
+                &mut output,
+                /*channels*/ 1,
+                /*rate*/ 44_100.0,
+                now,
+                &worker.buffers,
+                &mut output_state,
+            );
+        }
+        assert_eq!(
+            worker.buffers.rendered.len(),
+            worker.buffers.rendered.capacity()
+        );
+        assert!(worker.buffers.render_dropped.load(Ordering::Acquire));
+        assert_eq!(worker.service(&mut local.audio, || now).await.unwrap(), 0);
+        assert!(worker.buffers.rendered.is_empty());
+        assert!(!worker.buffers.render_dropped.load(Ordering::Acquire));
+        assert!(!worker.buffers.failed.load(Ordering::Acquire));
+
+        now += Duration::from_millis(/*millis*/ 70);
+        super::super::render_output(
+            &mut output,
+            /*channels*/ 1,
+            /*rate*/ 44_100.0,
+            now,
+            &worker.buffers,
+            &mut output_state,
+        );
+        enqueue(&worker, /*samples*/ 2_880, generation, now);
+        assert!(
+            !receive_capture(&mut worker, &mut local, &mut received, now)
+                .await
+                .is_empty()
+        );
+        assert!(worker.buffers.rendered.is_empty());
         local.close().await.unwrap();
         remote.close().await.unwrap();
     })

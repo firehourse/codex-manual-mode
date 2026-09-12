@@ -3,11 +3,62 @@ use crate::bottom_pane::goal_status_indicator_line;
 use crate::chatwidget::ThreadUsageOutcome;
 use crate::chatwidget::rate_limits::NUDGE_MODEL_SLUG;
 use crate::chatwidget::rate_limits::get_limits_duration;
+use crate::chatwidget::realtime::tests::activate_voice_for_thread;
 use codex_app_server_protocol::SpendControlLimitSnapshot;
 use codex_app_server_protocol::ThreadUsage;
 use pretty_assertions::assert_eq;
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serial_test::serial;
+
+#[tokio::test]
+async fn astra_sparkle_pauses_and_resumes_with_terminal_focus() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(Some("gpt-5.6-sol")).await;
+    chat.local_settings.tui.animations = true;
+    chat.local_settings.tui.whimsy = true;
+    chat.set_model("gpt-6-astra");
+    crate::terminal_palette::with_test_default_colors(
+        crate::terminal_probe::DefaultColors {
+            fg: (230, 216, 255),
+            bg: (36, 27, 53),
+        },
+        || {
+            let contains_stars = |text: &str| text.chars().any(|ch| "⠁⠂⠄⠈⠐⠠⡀⢀".contains(ch));
+            chat.set_sparkle_terminal_focus(/*focused*/ false);
+            assert!(!contains_stars(&render_bottom_popup(
+                &chat, /*width*/ 80
+            )));
+            chat.set_sparkle_terminal_focus(/*focused*/ true);
+            assert!(contains_stars(&render_bottom_popup(
+                &chat, /*width*/ 80
+            )));
+        },
+    );
+}
+
+#[tokio::test]
+async fn voice_live_transcript_renders_beside_the_streamed_cell() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.local_settings.tui.animations = false;
+    activate_voice_for_thread(&mut chat, ThreadId::new());
+    chat.update_realtime_footer();
+    chat.transcript.active_cell = Some(Box::new(history_cell::StreamingAgentTailCell::new(
+        vec![Line::from("Agent answer arriving").into()],
+        /*is_first_line*/ true,
+    )));
+    chat.on_realtime_transcript_delta("user".into(), "pick a number".into());
+
+    let width = 60;
+    let height = chat.desired_height(width);
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("create terminal");
+    terminal
+        .draw(|frame| chat.render(frame.area(), frame.buffer_mut()))
+        .expect("render live voice transcript");
+    let rendered = normalized_backend_snapshot(terminal.backend());
+    assert!(rendered.contains("Agent answer arriving"), "{rendered}");
+    assert!(rendered.contains("pick a number"), "{rendered}");
+    assert_chatwidget_snapshot!("voice_live_transcript_and_stream", rendered);
+}
 
 fn enable_test_ambient_pet(chat: &mut ChatWidget) {
     chat.set_pet_image_support_for_tests(crate::pets::PetImageSupport::Supported(
@@ -489,7 +540,6 @@ async fn configured_pet_load_is_deferred_until_after_construction() {
         feedback: codex_feedback::CodexFeedback::new(),
         is_first_run: true,
         status_account_display: None,
-        runtime_model_provider_base_url: None,
         initial_plan_type: None,
         model: Some(resolved_model),
         startup_tooltip_override: None,
@@ -2533,7 +2583,6 @@ async fn added_history_uses_pet_adjusted_terminal_width() {
     chat.add_to_history(WidthCell(std::sync::Arc::clone(&width)));
 
     assert_eq!(width.load(std::sync::atomic::Ordering::Relaxed), 69);
-    assert!(chat.transcript.needs_final_message_separator);
     let backend = VT100Backend::new(/*width*/ 80, /*height*/ 4);
     let mut terminal = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
     terminal.set_viewport_area(Rect::new(
@@ -3333,7 +3382,7 @@ async fn completed_turn_refreshes_estimated_thread_cost() {
     ));
 
     chat.on_task_complete(
-        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
+        /*last_agent_message*/ None, /*completion*/ None, /*from_replay*/ false,
     );
 
     let request_id = std::iter::from_fn(|| rx.try_recv().ok())
@@ -3385,7 +3434,7 @@ async fn completed_turn_refreshes_credits_only_terminal_title() {
     ));
 
     chat.on_task_complete(
-        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
+        /*last_agent_message*/ None, /*completion*/ None, /*from_replay*/ false,
     );
 
     let request_id = std::iter::from_fn(|| rx.try_recv().ok())
@@ -4519,7 +4568,7 @@ async fn runtime_metrics_websocket_timing_logs_and_final_separator_sums_totals()
     assert!(second_log.contains("TTFT: 80ms (iapi)"));
 
     chat.on_task_complete(
-        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
+        /*last_agent_message*/ None, /*completion*/ None, /*from_replay*/ false,
     );
     let mut final_separator = None;
     while let Ok(event) = rx.try_recv() {
@@ -4721,29 +4770,29 @@ async fn regular_commit_tick_clears_orphaned_plan_stream_tail() {
 }
 
 #[tokio::test]
-async fn reasoning_delta_redraws_only_when_header_becomes_visible() {
+async fn reasoning_delta_redraws_when_latest_usable_line_changes() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let (frame_requester, mut draw_rx) = FrameRequester::test_channel();
     chat.frame_requester = frame_requester;
 
-    chat.on_agent_reasoning_delta("still looking".to_string());
+    chat.on_agent_reasoning_delta("**Checking".to_string());
     assert!(matches!(
         draw_rx.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
     ));
     assert_eq!(chat.reasoning_header, None);
 
-    chat.on_agent_reasoning_delta(" **Checking".to_string());
-    assert!(matches!(
-        draw_rx.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-    ));
-
     chat.on_agent_reasoning_delta(" files**".to_string());
     assert!(draw_rx.try_recv().is_ok());
     assert_eq!(chat.reasoning_header.as_deref(), Some("Checking files"));
 
-    chat.on_agent_reasoning_delta(" and preparing a response".to_string());
+    chat.on_agent_reasoning_delta("\nPreparing a response".to_string());
+    assert!(draw_rx.try_recv().is_ok());
+    assert_eq!(
+        chat.reasoning_header.as_deref(),
+        Some("Preparing a response")
+    );
+    chat.on_agent_reasoning_delta("".to_string());
     assert!(matches!(
         draw_rx.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
@@ -4790,7 +4839,7 @@ async fn reasoning_delta_restores_recreated_status_indicator_header() {
         .bottom_pane
         .status_widget()
         .expect("status indicator should be recreated");
-    assert_eq!(status.header(), "Working");
+    assert_eq!(status.header(), "Checking files");
 
     chat.on_agent_reasoning_delta(" and preparing a response".to_string());
 
@@ -4798,7 +4847,7 @@ async fn reasoning_delta_restores_recreated_status_indicator_header() {
         .bottom_pane
         .status_widget()
         .expect("status indicator should remain visible");
-    assert_eq!(status.header(), "Checking files");
+    assert_eq!(status.header(), "Checking files and preparing a response");
 
     let width: u16 = 80;
     let height = chat.desired_height(width);
@@ -5730,7 +5779,9 @@ printf 'fenced within fenced\n'
 
     assert_chatwidget_snapshot!(
         "chatwidget_markdown_code_blocks_vt100_snapshot",
-        normalize_snapshot_paths(term.backend().vt100().screen().contents())
+        normalize_completion_timestamps(normalize_snapshot_paths(
+            term.backend().vt100().screen().contents()
+        ))
     );
 }
 

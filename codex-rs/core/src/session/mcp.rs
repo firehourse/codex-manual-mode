@@ -98,11 +98,12 @@ impl Session {
         config: &Config,
     ) -> (McpConfig, McpRuntimeContext) {
         let originator = self.originator().await;
-        let (session_source, host_fallback_cwd) = {
+        let (session_source, host_fallback_cwd, disabled_plugin_ids) = {
             let state = self.state.lock().await;
             (
                 state.session_configuration.session_source.clone(),
                 state.session_configuration.cwd().clone(),
+                state.active_disabled_plugin_ids.clone(),
             )
         };
         let environments = self.services.turn_environments.snapshot().await;
@@ -128,6 +129,7 @@ impl Session {
                 McpThreadIdentity {
                     session_source: &session_source,
                     originator: &originator,
+                    disabled_plugin_ids: &disabled_plugin_ids,
                     environments: McpEnvironmentScope::Live(&self.services.turn_environments),
                 },
                 &ready_selected_capability_roots,
@@ -135,12 +137,7 @@ impl Session {
             )
             .await;
         let mcp_config = self
-            .project_selected_environment_mcp_servers(
-                &session_source,
-                config,
-                &environments,
-                mcp_projection,
-            )
+            .project_selected_environment_mcp_servers(config, &environments, mcp_projection)
             .await
             .config;
         let local_process_cwd = environments
@@ -238,6 +235,7 @@ impl Session {
                     McpThreadIdentity {
                         session_source: &desired.session_source,
                         originator: &desired.originator,
+                        disabled_plugin_ids: &desired.disabled_plugin_ids,
                         environments: McpEnvironmentScope::Live(&self.services.turn_environments),
                     },
                     &ready_selected_capability_roots,
@@ -304,6 +302,7 @@ impl Session {
                 McpThreadIdentity {
                     session_source: &desired.session_source,
                     originator: &desired.originator,
+                    disabled_plugin_ids: &desired.disabled_plugin_ids,
                     environments: McpEnvironmentScope::Live(&self.services.turn_environments),
                 },
                 &ready_selected_capability_roots,
@@ -312,7 +311,6 @@ impl Session {
             .await;
         let mcp_projection = self
             .project_selected_environment_mcp_servers(
-                &desired.session_source,
                 &desired.config,
                 &desired.environments,
                 mcp_projection,
@@ -668,12 +666,13 @@ impl Session {
             return;
         };
         let auth = self.services.auth_manager.auth().await;
-        {
+        let disabled_plugin_ids = {
             let mut state = self.state.lock().await;
             let mut config = (*state.session_configuration.original_config_do_not_use).clone();
             config.mcp_servers = refresh_config.mcp_servers.clone();
             state.session_configuration.original_config_do_not_use = Arc::new(config);
-        }
+            state.active_disabled_plugin_ids.clone()
+        };
         let ready_selected_capability_roots = self
             .services
             .mcp_runtime
@@ -696,6 +695,7 @@ impl Session {
                 McpThreadIdentity {
                     session_source: &turn_context.session_source,
                     originator: &turn_context.originator,
+                    disabled_plugin_ids: &disabled_plugin_ids,
                     environments: McpEnvironmentScope::Live(&self.services.turn_environments),
                 },
                 &ready_selected_capability_roots,
@@ -789,9 +789,8 @@ async fn review_guardian_mcp_elicitation(
             .meta()
             .and_then(|meta| meta.get("callId"))
             .and_then(Value::as_str)
-        && let Some((Some(invocation), _)) = session
-            .mcp_tool_approval_metadata(&turn_context.sub_id, call_id)
-            .await
+        && let Some((Some(invocation), _)) =
+            session.mcp_tool_approval_metadata(&request.server_name, call_id)
         && invocation.server == request.server_name
     {
         Some(call_id)
@@ -807,13 +806,15 @@ async fn review_guardian_mcp_elicitation(
         Some(Value::Bool(true))
     );
 
-    if matches!(
+    let mut review_context = crate::guardian::GuardianReviewContext::from(&turn_context);
+    let strict_auto_review = matches!(
         request
             .elicitation
             .meta()
             .and_then(|meta| meta.get(MCP_ELICITATION_STRICT_AUTO_REVIEW_KEY)),
         Some(Value::Bool(true))
-    ) {
+    );
+    let guardian_request = if strict_auto_review {
         let connector_id = elicitation_connector_id(&request.elicitation);
         let trusted_guardian_request = if request.server_name == CODEX_APPS_MCP_SERVER_NAME {
             let Some(call_id) = request
@@ -826,9 +827,8 @@ async fn review_guardian_mcp_elicitation(
             else {
                 return Ok(None);
             };
-            let Some((Some(invocation), metadata)) = session
-                .mcp_tool_approval_metadata(&turn_context.sub_id, call_id)
-                .await
+            let Some((Some(invocation), metadata)) =
+                session.mcp_tool_approval_metadata(&request.server_name, call_id)
             else {
                 return Ok(None);
             };
@@ -883,107 +883,96 @@ async fn review_guardian_mcp_elicitation(
         else {
             return Ok(None);
         };
-        let guardian_request = trusted_guardian_request.unwrap_or(*guardian_request);
-        let decision = crate::guardian::review_approval_request_with_cancel(
-            &session,
-            &turn_context,
-            crate::guardian::new_guardian_review_id(),
-            guardian_request,
-            /*retry_reason*/ None,
-            crate::guardian::GuardianReviewOptions {
-                plugin_attribution_override: None,
-                approval_request_source: codex_analytics::GuardianApprovalRequestSource::MainTurn,
-                external_cancel: Some(cancellation_token),
-                require_synchronous_review,
-            },
-        )
-        .await;
-
-        return Ok(matches!(
-            decision,
-            ReviewDecision::Approved
-                | ReviewDecision::Denied { .. }
-                | ReviewDecision::TimedOut
-                | ReviewDecision::Abort
-        )
-        .then(|| {
-            mcp_elicitation_response_from_guardian_decision(decision, turn_context.model_info())
-        }));
-    }
-
-    let approval_policy = mcp_config.approval_policy.value();
-    match approval_policy {
-        AskForApproval::Never => {
-            let Some(permission_profile) =
-                mcp_config.permission_profile_for_server(&request.server_name)
-            else {
+        trusted_guardian_request.unwrap_or(*guardian_request).into()
+    } else {
+        let approval_policy = mcp_config.approval_policy.value();
+        match approval_policy {
+            AskForApproval::Never => {
+                let Some(permission_profile) =
+                    mcp_config.permission_profile_for_server(&request.server_name)
+                else {
+                    return Ok(Some(mcp_elicitation_decline_without_message()));
+                };
+                if codex_mcp::mcp_permission_prompt_is_auto_approved(
+                    approval_policy,
+                    permission_profile,
+                    codex_mcp::McpPermissionPromptAutoApproveContext::default(),
+                ) && matches!(
+                    &request.elicitation,
+                    Elicitation::Mcp(
+                        rmcp::model::ElicitRequestParams::FormElicitationParams {
+                            requested_schema,
+                            ..
+                        }
+                    ) if requested_schema.properties.is_empty()
+                ) {
+                    return Ok(Some(ElicitationResponse {
+                        action: ElicitationAction::Accept,
+                        content: Some(serde_json::json!({})),
+                        meta: None,
+                    }));
+                }
                 return Ok(Some(mcp_elicitation_decline_without_message()));
-            };
-            if codex_mcp::mcp_permission_prompt_is_auto_approved(
-                approval_policy,
-                permission_profile,
-                codex_mcp::McpPermissionPromptAutoApproveContext::default(),
-            ) && matches!(
-                &request.elicitation,
-                Elicitation::Mcp(
-                    rmcp::model::ElicitRequestParams::FormElicitationParams {
-                        requested_schema,
-                        ..
-                    }
-                ) if requested_schema.properties.is_empty()
-            ) {
-                return Ok(Some(ElicitationResponse {
-                    action: ElicitationAction::Accept,
-                    content: Some(serde_json::json!({})),
-                    meta: None,
-                }));
             }
-            return Ok(Some(mcp_elicitation_decline_without_message()));
+            AskForApproval::Granular(config) if !config.allows_mcp_elicitations() => {
+                return Ok(Some(mcp_elicitation_decline_without_message()));
+            }
+            AskForApproval::OnRequest
+            | AskForApproval::UnlessTrusted
+            | AskForApproval::Granular(_) => {}
         }
-        AskForApproval::Granular(config) if !config.allows_mcp_elicitations() => {
-            return Ok(Some(mcp_elicitation_decline_without_message()));
-        }
-        AskForApproval::OnRequest | AskForApproval::UnlessTrusted | AskForApproval::Granular(_) => {
-        }
-    }
 
-    let approvals_reviewer = crate::connectors::mcp_approvals_reviewer_from_layers(
-        &mcp_config.config_layer_stack,
-        step_settings
-            .mcp_approvals_reviewer_override
-            .unwrap_or(mcp_config.approvals_reviewer),
-        Some(turn_context.model_info().slug.as_str()),
-        request.server_name.as_str(),
-        elicitation_connector_id(&request.elicitation),
-        /*link_id*/ None,
-    );
-    if !crate::guardian::routes_approval_policy_to_guardian(approval_policy, approvals_reviewer) {
-        return Ok(None);
-    }
-
-    let guardian_request = match guardian_elicitation_review_request(&request, originating_call_id)
-    {
-        GuardianElicitationReview::NotRequested => return Ok(None),
-        GuardianElicitationReview::Decline(reason) => {
-            warn!(
-                server_name = %request.server_name,
-                request_id = %mcp_elicitation_request_id(&request.request_id),
-                reason,
-                "declining Guardian MCP elicitation before review"
-            );
-            return Ok(Some(mcp_elicitation_decline_without_message()));
+        let approvals_reviewer = crate::connectors::mcp_approvals_reviewer_from_layers(
+            &mcp_config.config_layer_stack,
+            step_settings
+                .mcp_approvals_reviewer_override
+                .unwrap_or(mcp_config.approvals_reviewer),
+            Some(turn_context.model_info().slug.as_str()),
+            request.server_name.as_str(),
+            elicitation_connector_id(&request.elicitation),
+            /*link_id*/ None,
+        );
+        review_context.approval_policy = approval_policy;
+        review_context.approvals_reviewer = approvals_reviewer;
+        match guardian_elicitation_review_request(&request, originating_call_id) {
+            GuardianElicitationReview::NotRequested => return Ok(None),
+            GuardianElicitationReview::Decline(reason) => {
+                let Elicitation::Mcp(elicitation) = &request.elicitation else {
+                    return Ok(None);
+                };
+                crate::guardian::ReviewAction {
+                    action: serde_json::to_value(elicitation)
+                        .map(|elicitation| {
+                            serde_json::json!({
+                                "tool": "mcp_elicitation",
+                                "server": request.server_name,
+                                "request": elicitation,
+                            })
+                        })
+                        .map_err(|error| error.to_string()),
+                    category: codex_protocol::openai_models::GuardianScope::for_mcp_server(
+                        &request.server_name,
+                    ),
+                    request: Err(reason.to_owned()),
+                }
+            }
+            GuardianElicitationReview::ApprovalRequest(guardian_request) => {
+                (*guardian_request).into()
+            }
         }
-        GuardianElicitationReview::ApprovalRequest(guardian_request) => *guardian_request,
     };
-
-    let review_id = crate::guardian::new_guardian_review_id();
-    let decision = crate::guardian::review_approval_request_with_cancel(
-        &session,
-        &turn_context,
-        review_id,
+    let declined_reason = guardian_request.request.as_ref().err().cloned();
+    let decision = crate::guardian::decide_approval(
+        session,
+        review_context,
+        crate::guardian::new_guardian_review_id(),
         guardian_request,
-        /*retry_reason*/ None,
+        crate::tools::sandboxing::ApprovalRequestReasons {
+            approval: None,
+            retry: None,
+        },
         crate::guardian::GuardianReviewOptions {
+            require_guardian: strict_auto_review,
             plugin_attribution_override: None,
             approval_request_source: codex_analytics::GuardianApprovalRequestSource::MainTurn,
             external_cancel: Some(cancellation_token),
@@ -991,10 +980,15 @@ async fn review_guardian_mcp_elicitation(
         },
     )
     .await;
-    Ok(Some(mcp_elicitation_response_from_guardian_decision(
-        decision,
-        turn_context.model_info(),
-    )))
+    Ok(decision.map(|decision| {
+        if let Some(reason) = declined_reason {
+            warn!(server_name = %request.server_name,
+                request_id = %mcp_elicitation_request_id(&request.request_id), reason,
+                "declining Guardian MCP elicitation before review");
+            return mcp_elicitation_decline_without_message();
+        }
+        mcp_elicitation_response_from_guardian_decision(decision, turn_context.model_info())
+    }))
 }
 
 fn guardian_elicitation_review_request(
@@ -1023,7 +1017,9 @@ fn guardian_elicitation_review_request(
                 "guardian MCP elicitation review does not support this elicitation mode",
             );
         }
-        Elicitation::OpenAiForm { .. } | Elicitation::OpenAiElicitationForm { .. } => {
+        Elicitation::OpenAiForm { .. }
+        | Elicitation::OpenAiElicitationForm { .. }
+        | Elicitation::UserVerification { .. } => {
             return GuardianElicitationReview::NotRequested;
         }
     };

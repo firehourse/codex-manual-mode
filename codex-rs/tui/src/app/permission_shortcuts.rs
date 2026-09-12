@@ -17,6 +17,10 @@ impl App {
             self.chat_widget.complete_permission_shortcut(thread_id);
             return;
         }
+        if self.reject_pending_permission_change() {
+            self.chat_widget.complete_permission_shortcut(thread_id);
+            return;
+        }
         let result: Result<()> = async {
             // A queued submission can start between the keypress and this event.
             if self.chat_widget.is_user_turn_pending_or_running() {
