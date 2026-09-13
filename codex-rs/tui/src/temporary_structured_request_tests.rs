@@ -3,6 +3,7 @@ use super::TemporaryStructuredThreadOptions;
 use super::collect_structured_response;
 use super::start_temporary_thread;
 use crate::test_support::PathBufExt;
+use codex_app_server_client::AppServerEvent;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadItem;
@@ -58,6 +59,9 @@ async fn preserves_custom_permissions_and_disables_required_mcp_servers() -> col
         codex_home.path().join("config.toml"),
         format!(
             "default_permissions = \"title-restricted\"\n\n\
+             [features.token_budget]\n\
+             enabled = true\n\
+             use_history_notes_extension = true\n\n\
              [permissions.title-restricted.filesystem]\n\
              \":root\" = \"read\"\n\
              {denied_key} = \"deny\"\n\n\
@@ -70,7 +74,7 @@ async fn preserves_custom_permissions_and_disables_required_mcp_servers() -> col
     config.sqlite =
         codex_state::SqliteConfig::new_for_testing(codex_home.path().to_path_buf().abs());
 
-    let app_server = crate::start_embedded_app_server_for_picker(&config).await?;
+    let mut app_server = crate::start_embedded_app_server_for_picker(&config).await?;
     let response = start_temporary_thread(
         &app_server.request_handle(),
         TemporaryStructuredThreadOptions {
@@ -82,6 +86,27 @@ async fn preserves_custom_permissions_and_disables_required_mcp_servers() -> col
         },
     )
     .await?;
+
+    let warnings = tokio::time::timeout(std::time::Duration::from_secs(/*secs*/ 5), async {
+        let mut warnings = Vec::new();
+        loop {
+            let event = app_server.next_event().await.expect("app-server event");
+            if let AppServerEvent::ServerNotification(notification) = event {
+                match *notification {
+                    ServerNotification::ConfigWarning(warning) => warnings.push(warning.summary),
+                    ServerNotification::ThreadStarted(started)
+                        if started.thread.id == response.thread.id =>
+                    {
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        warnings
+    })
+    .await?;
+    insta::assert_debug_snapshot!(warnings, @"[]");
 
     assert_eq!(
         (
