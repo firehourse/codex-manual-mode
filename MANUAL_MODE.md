@@ -55,9 +55,14 @@ for interactive sessions; `exec` and `review` do not support Manual approvals.
 - Shift+Tab cycles **Manual → Ask for approval → Manual**. If **Approve for me**
   is available, it appears between Ask for approval and Manual. Codex's existing
   Ask for approval mode permits workspace edits automatically.
-- Native read/search tools keep their existing behavior. Shell-based reads such
-  as `rg` can also prompt unless an existing command rule allows them. Claude's
-  built-in read-only shell exemptions are not copied into this fork.
+- Common read-only shell commands run without a prompt inside the sandbox:
+  `rg`, `cat`, `ls`, `pwd`, `head`, `tail`, `wc`, and numeric `sed -n '1,20p'`
+  reads. Plain pipelines and command sequences are allowed when every command
+  qualifies. Writing through shell redirection, substitutions, unknown commands,
+  executable paths, and options that execute helpers (such as `rg --pre`) still
+  require approval. Git commands can execute repository-configured helpers, so
+  they retain their usual approvals. Explicit prompt/deny rules and requests to
+  leave the sandbox still take precedence over read-only classification.
 - The footer shows **Manual mode** when approvals are directed to you. Mode
   changes via Shift+Tab are confirmed by the server before the UI updates and
   do not rewrite your global config. Use `codex-manual` or `--manual` to keep

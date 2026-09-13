@@ -27,6 +27,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_shell_command::is_dangerous_command::DangerousCommandMatch;
 use codex_shell_command::is_dangerous_command::DangerousCommandPlatform;
 use codex_shell_command::is_dangerous_command::dangerous_command_match_for_platform;
+use codex_shell_command::is_read_only_command;
 use thiserror::Error;
 use tokio::fs;
 use tokio::sync::Semaphore;
@@ -813,9 +814,16 @@ fn render_decision_for_unmatched_command_for_platform(
             Decision::Allow
         }
         AskForApproval::UnlessTrusted => {
-            // Projects marked untrusted require approval for every command
-            // that is not explicitly allowed by an exec policy rule.
-            Decision::Prompt
+            // Read-only commands may run in the sandbox. Explicit rules were
+            // evaluated first; elevation and other commands still need approval.
+            if file_system_sandbox_policy.kind == FileSystemSandboxKind::Restricted
+                && !sandbox_permissions.requests_sandbox_override()
+                && is_read_only_command(command)
+            {
+                Decision::Allow
+            } else {
+                Decision::Prompt
+            }
         }
         AskForApproval::OnRequest => {
             match file_system_sandbox_policy.kind {
