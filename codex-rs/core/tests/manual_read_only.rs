@@ -33,6 +33,19 @@ enum Approval {
 
 #[test_case("rg --no-config -n needle input.txt", "", Approval::Skip; "search")]
 #[test_case("cat input.txt | head -n 1", "", Approval::Skip; "pipeline")]
+#[test_case("git diff --no-index --no-ext-diff --no-textconv /dev/null input.txt", "", Approval::Skip; "git diff")]
+#[test_case("find . -name input.txt -print", "", Approval::Skip; "find")]
+#[test_case("sort input.txt", "", Approval::Skip; "sort")]
+#[test_case("git diff --output=output.txt", "", Approval::Prompt; "git output")]
+#[test_case("git add input.txt", "", Approval::Prompt; "git write")]
+#[test_case("cd . && git status", "", Approval::Prompt; "git after cd")]
+#[test_case("find . -name input.txt -delete", "", Approval::Prompt; "find delete")]
+#[test_case("sort -o output.txt input.txt", "", Approval::Prompt; "sort output")]
+#[test_case(
+    "git diff --no-index /dev/null input.txt",
+    r#"prefix_rule(pattern=["git"], decision="prompt")"#,
+    Approval::Prompt; "explicit git rule"
+)]
 #[test_case("cat input.txt > output.txt", "", Approval::Prompt; "redirect")]
 #[test_case("cat input.txt && touch output.txt", "", Approval::Prompt; "mixed commands")]
 #[test_case("rg --pre=helper needle input.txt", "", Approval::Prompt; "preprocessor")]
@@ -132,7 +145,7 @@ async fn manual_read_only_approval_flow(
         Approval::Skip => assert!(
             output
                 .lines()
-                .any(|line| matches!(line, "needle" | "1:needle")),
+                .any(|line| matches!(line, "needle" | "1:needle" | "+needle" | "./input.txt")),
             "{output}"
         ),
         Approval::Prompt => assert!(

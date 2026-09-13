@@ -1018,8 +1018,8 @@ async fn git_status_obeys_approval_policy_and_explicit_rules() {
         (
             AskForApproval::UnlessTrusted,
             None,
-            ExecApprovalRequirement::NeedsApproval {
-                reason: None,
+            ExecApprovalRequirement::Skip {
+                bypass_sandbox: false,
                 proposed_execpolicy_amendment: amendment.clone(),
             },
         ),

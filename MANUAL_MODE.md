@@ -56,13 +56,17 @@ for interactive sessions; `exec` and `review` do not support Manual approvals.
   is available, it appears between Ask for approval and Manual. Codex's existing
   Ask for approval mode permits workspace edits automatically.
 - Common read-only shell commands run without a prompt inside the sandbox:
-  `rg`, `cat`, `ls`, `pwd`, `head`, `tail`, `wc`, and numeric `sed -n '1,20p'`
-  reads. Plain pipelines and command sequences are allowed when every command
-  qualifies. Writing through shell redirection, substitutions, unknown commands,
+  `rg`, `cat`, `ls`, `pwd`, `head`, `tail`, `wc`, `diff`, `du`, read-only `find`
+  and `sort`, and numeric `sed -n '1,20p'` reads. Common Git queries such as
+  `status`, `diff`, `log`, `show`, `branch -vv`, `remote -v`, `worktree list`,
+  and `config --get` also run without a prompt, following Claude Code's
+  `default` permission mode. Plain pipelines and command sequences are allowed
+  when every command qualifies. Combining `cd` and Git in one script requires
+  approval. Writing through shell redirection, substitutions, unknown commands,
   executable paths, and options that execute helpers (such as `rg --pre`) still
-  require approval. Git commands can execute repository-configured helpers, so
-  they retain their usual approvals. Explicit prompt/deny rules and requests to
-  leave the sandbox still take precedence over read-only classification.
+  require approval, as do Git mutations such as `add`, `commit`, and `push`.
+  Explicit prompt/deny rules and requests to leave the sandbox still take
+  precedence over read-only classification.
 - The footer shows **Manual mode** when approvals are directed to you. Mode
   changes via Shift+Tab are confirmed by the server before the UI updates and
   do not rewrite your global config. Use `codex-manual` or `--manual` to keep

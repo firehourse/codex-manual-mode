@@ -358,6 +358,16 @@ impl ExecPolicyManager {
         // Avoid reusable approvals when this model does not honor prefix rules.
         let auto_amendment_allowed = allow_prefix_rules == AllowPrefixRules::Honor;
         let exec_policy_fallback = |cmd: &[String]| {
+            // Like Claude Code's default mode, changing directories in the same
+            // script as Git requires review of the repository being operated on.
+            if approval_policy == AskForApproval::UnlessTrusted
+                && matches!(cmd.first().map(String::as_str), Some("git" | "git.exe"))
+                && commands
+                    .iter()
+                    .any(|command| command.first().is_some_and(|program| program == "cd"))
+            {
+                return Decision::Prompt;
+            }
             render_decision_for_unmatched_command_for_platform(
                 cmd,
                 UnmatchedCommandContext {

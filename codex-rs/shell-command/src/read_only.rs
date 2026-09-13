@@ -1,5 +1,7 @@
 //! Conservative read-only classification for Manual mode shell approvals.
 
+mod git;
+
 /// Recognizes plain command words that can run without approval in the sandbox.
 ///
 /// Callers must parse shell syntax before calling this function and keep explicit
@@ -10,8 +12,33 @@ pub fn is_read_only_command(command: &[String]) -> bool {
         return false;
     };
     match program.as_str() {
-        "cat" | "cd" | "cut" | "echo" | "false" | "grep" | "head" | "id" | "ls" | "nl"
-        | "paste" | "pwd" | "stat" | "tail" | "tr" | "true" | "uname" | "wc" | "whoami" => true,
+        "basename" | "cat" | "cd" | "cut" | "df" | "diff" | "dirname" | "du" | "echo" | "false"
+        | "grep" | "head" | "id" | "ls" | "nl" | "paste" | "pwd" | "readlink" | "realpath"
+        | "stat" | "tail" | "test" | "tr" | "true" | "uname" | "wc" | "whoami" => true,
+        "git" | "git.exe" => git::is_read_only(args),
+        "find" => !args.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "-delete"
+                    | "-exec"
+                    | "-execdir"
+                    | "-ok"
+                    | "-okdir"
+                    | "-fprint"
+                    | "-fprint0"
+                    | "-fprintf"
+                    | "-fls"
+            )
+        }),
+        "sort" => !args.iter().any(|arg| {
+            let option = arg.split('=').next().unwrap_or(arg);
+            (option.starts_with("--")
+                && option.len() > 2
+                && ["--output", "--compress-program"]
+                    .iter()
+                    .any(|name| name.starts_with(option)))
+                || (arg.starts_with('-') && !arg.starts_with("--") && arg.contains('o'))
+        }),
         "rg" | "rg.exe" => !args.iter().any(|arg| {
             let option = arg.split('=').next().unwrap_or(arg);
             matches!(option, "--pre" | "--hostname-bin" | "--search-zip")

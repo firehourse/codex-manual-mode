@@ -36,6 +36,13 @@ async fn manual_read_only_commands_stay_in_the_sandbox() {
         vec!["rg", "-n", "needle", "src"],
         vec!["bash", "-lc", "rg -n needle src | head -n 20"],
         vec!["zsh", "-c", "cd src && rg --files; cat Cargo.toml"],
+        vec![
+            "bash",
+            "-lc",
+            "pwd && git status --short --branch && git branch -vv && git remote -v",
+        ],
+        vec!["bash", "-lc", "git diff --check && git log -8 --oneline"],
+        vec!["bash", "-lc", "find . -name '*.rs' -print | head -n 20"],
     ] {
         let command = vec_str(&words);
         let first_command = commands_for_exec_policy(&command)
@@ -133,6 +140,12 @@ async fn manual_shell_side_effects_require_approval() {
         "rg -nz needle input",
         "rg --pre{=,=sh} needle input",
         "RIPGREP_CONFIG_PATH=config rg needle input",
+        "cd src && git status",
+        "git diff --output=output",
+        "git status && git add output",
+        "find . -delete",
+        "find . -exec touch output ';'",
+        "sort -o output input",
     ] {
         let requirement = exec_approval_requirement_for_command(ExecApprovalRequirementScenario {
             policy_src: None,
